@@ -4,6 +4,7 @@ To run the code:
 ```
 python test_on_video.py --det_file det/video1_0_dets.txt --in_vid_file video1_0.avi --out_vid_file video1_0_tracked.avi
 ```
+WARNING: The changes only work for video and not for images
 
 ## Object Tracking
 Installation: Use this command to install all the necessary packages. Note that we are using ```python3```
