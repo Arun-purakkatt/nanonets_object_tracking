@@ -5,6 +5,7 @@ To run the code:
 python test_on_video.py --det_file det/video1_0_dets.txt --in_vid_file video1_0.avi --out_vid_file video1_0_tracked.avi
 ```
 WARNING: The changes only work for video and not for images
+Video: https://www.linkedin.com/posts/sarimmehdi550_deeplearning-computervision-trafficcontrol-activity-6631734427108028416-haBJ
 
 ## Object Tracking
 Installation: Use this command to install all the necessary packages. Note that we are using ```python3```
