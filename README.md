@@ -1,3 +1,10 @@
+## Counting objects
+For counting objects, I have made the necessary changes in the code. Make sure your detection file is a txt with the following format (label must be a string, like car etc.): frame,-1,x,y,w,h,score,-1,-1,-1,label
+To run the code:
+```
+python test_on_video.py --det_file det/video1_0_dets.txt --in_vid_file video1_0.avi --out_vid_file video1_0_tracked.avi
+```
+
 ## Object Tracking
 Installation: Use this command to install all the necessary packages. Note that we are using ```python3```
 
