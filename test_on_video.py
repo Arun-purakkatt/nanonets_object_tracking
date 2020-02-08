@@ -14,6 +14,7 @@ import torch.nn as nn
 from torch import optim
 import torch.nn.functional as F
 import cv2,pickle,sys
+import argparse
 
 from deepsort import *
 
@@ -28,6 +29,7 @@ def get_gt(image,frame_id,gt_dict):
 	detections = []
 	ids = []
 	out_scores = []
+	labels = []
 	for i in range(len(frame_info)):
 
 		coords = frame_info[i]['coords']
@@ -43,8 +45,9 @@ def get_gt(image,frame_id,gt_dict):
 
 		detections.append([x1,y1,w,h])
 		out_scores.append(frame_info[i]['conf'])
+		labels.append(frame_info[i]['label'])
 
-	return detections,out_scores
+	return detections,out_scores,labels
 
 
 def get_dict(filename):
@@ -59,43 +62,64 @@ def get_dict(filename):
 
 	for i in range(len(d)):
 		a = list(d[i].split(','))
-		a = list(map(float,a))	
+		label = a[-1]
+		a = list(map(float,a[:-1]))
+
+		if a[6] < 0.8: continue
 
 		coords = a[2:6]
 		confidence = a[6]
-		gt_dict[a[0]].append({'coords':coords,'conf':confidence})
+		gt_dict[a[0]].append({'coords':coords,'conf':confidence, 'label':label})
 
 	return gt_dict
 
-def get_mask(filename):
-	mask = cv2.imread(filename,0)
-	mask = mask / 255.0
-	return mask
+def withinbbox(pt, bbox):
+	x = (pt[0] + pt[2]) / 2
+	y = (pt[1] + pt[3]) / 2
+	if bbox[0] <= x <= bbox[0] + bbox[2] and bbox[1] <= y <= bbox[1] + bbox[3]:
+		return True
+	else:
+		return False
 
+parser = argparse.ArgumentParser()
+parser.add_argument('--det_file', default='det/video1_0_dets.txt', type=str, help='path to dets')
+parser.add_argument('--in_vid_file', default='video1_0.avi', type=str, help='path to input video file')
+parser.add_argument('--out_vid_file', default='video1_0_tracked.avi', type=str, help='path to output video file')
 
 if __name__ == '__main__':
-	
+	args = parser.parse_args()
+
 	#Load detections for the video. Options available: yolo,ssd and mask-rcnn
-	filename = 'det/det_ssd512.txt'
+	filename = args.det_file
 	gt_dict = get_dict(filename)
 
-	cap = cv2.VideoCapture('vdo.avi')
-
-	#an optional mask for the given video, to focus on the road. 
-	mask = get_mask('roi.jpg')
+	cap = cv2.VideoCapture(args.in_vid_file)
+	width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+	height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+	frames_per_second = cap.get(cv2.CAP_PROP_FPS)
 
 	#Initialize deep sort.
 	deepsort = deepsort_rbc()
 
 	frame_id = 1
 
-	mask = np.expand_dims(mask,2)
-	mask = np.repeat(mask,3,2)
+	out = cv2.VideoWriter(
+		filename=args.out_vid_file,
+		fourcc=cv2.VideoWriter_fourcc(*'DIVX'),
+		fps=float(frames_per_second),
+		frameSize=(width + width//3, height),
+		isColor=True,
+	)
 
-	fourcc = cv2.VideoWriter_fourcc(*'XVID')
-	out = cv2.VideoWriter('ssd_out_3.avi',fourcc, 10.0, (1920,1080))
+	r, f = cap.read()
+	rects = []
+	answer = 'y'
+	while answer == 'y':
+		bbox = cv2.selectROI('DRAW BOUNDING BOXES HERE', f, showCrosshair=False)
+		rects.append(bbox)
+		answer = input("DO YOU WISH TO DRAW ANOTHER BOUNDING BOX? (y=yes)")
 
-
+	labelDict = {}
 	while True:
 		print(frame_id)		
 
@@ -104,10 +128,9 @@ if __name__ == '__main__':
 			frame_id+=1
 			break	
 
-		frame = frame * mask
 		frame = frame.astype(np.uint8)
 
-		detections,out_scores = get_gt(frame,frame_id,gt_dict)
+		detections,out_scores,labels = get_gt(frame,frame_id,gt_dict)
 
 		if detections is None:
 			print("No dets")
@@ -117,8 +140,9 @@ if __name__ == '__main__':
 		detections = np.array(detections)
 		out_scores = np.array(out_scores) 
 
-		tracker,detections_class = deepsort.run_deep_sort(frame,out_scores,detections)
+		tracker,detections_class = deepsort.run_deep_sort(frame,out_scores,detections,labels)
 
+		counterImg = np.zeros((height, width//3, 3), np.uint8)
 		for track in tracker.tracks:
 			if not track.is_confirmed() or track.time_since_update > 1:
 				continue
@@ -130,15 +154,41 @@ if __name__ == '__main__':
 			#Draw bbox from tracker.
 			cv2.rectangle(frame, (int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])),(255,255,255), 2)
 			cv2.putText(frame, str(id_num),(int(bbox[0]), int(bbox[1])),0, 5e-3 * 200, (0,255,0),2)
+			cv2.putText(frame, track.label, (int(bbox[0]), int(bbox[1])-30), 0, 5e-3 * 200, (0, 255, 0), 2)
+
+			# draw boxes for counting
+			for rect in rects:
+				x = int(rect[0])
+				y = int(rect[1])
+				w = int(rect[2])
+				h = int(rect[3])
+				cv2.rectangle(frame, (x, y), (x + w, y + h), (255, 0, 0), 2)
+
+				if withinbbox(bbox, rect):
+					if track.label in labelDict.keys():
+						if id_num not in labelDict[track.label]:
+							labelDict[track.label].append(id_num)
+					else:
+						labelDict[track.label] = []
+						labelDict[track.label].append(id_num)
+
+				verticalCounter = 50
+				for label, IDlist in labelDict.items():
+					cv2.putText(counterImg, label + ': ' + str(len(IDlist)),
+								(100, verticalCounter), 0, 1, (0, 255, 0), 2)
+					verticalCounter += 50
 
 			#Draw bbox from detector. Just to compare.
 			for det in detections_class:
 				bbox = det.to_tlbr()
 				cv2.rectangle(frame,(int(bbox[0]), int(bbox[1])), (int(bbox[2]), int(bbox[3])),(255,255,0), 2)
+
+		finalImg = np.concatenate((frame, counterImg), axis=1)
 		
-		cv2.imshow('frame',frame)
-		out.write(frame)
+		cv2.imshow('frame',finalImg)
+		out.write(finalImg)
 		if cv2.waitKey(1) & 0xFF == ord('q'):
 			break
 
 		frame_id+=1
+	out.release()
